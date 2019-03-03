@@ -322,9 +322,9 @@ public class Main {
         }
       } else {
         for (Package p : repo) {
-          if (p.getName().equals(cSpl[0])
-              && (cSpl.length == 1 || p.getVersion().equals(cSpl[1]))) {
-            return true;
+          if (p.getName().equals(cSpl[1])
+              && (cSpl.length == 2 || p.getVersion().equals(cSpl[2]))) {
+            return false;
           }
         }
       }
