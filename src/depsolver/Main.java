@@ -53,7 +53,7 @@ public class Main {
 
   public static void main(String[] args) throws IOException {
     // Custom args
-    args = getArgs();
+//    args = getArgs();
 
     TypeReference<List<Package>> repoType = new TypeReference<List<Package>>() {};
     List<Package> repo = JSON.parseObject(readFile(args[0]), repoType);
