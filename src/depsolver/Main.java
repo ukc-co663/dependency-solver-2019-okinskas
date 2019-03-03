@@ -33,14 +33,14 @@ public class Main {
   private List<String> constraints;
   private HashSet<List<Package>> seen;
   private List<Package> finalState;
-  private String finalCommands;
+  private List<String> finalCommands;
 
   public Main(List<Package> repo, List<String> initial, List<String> constraints) {
     this.repo = repo;
     this.initial = initial;
     this.constraints = constraints;
     seen = new HashSet<>();
-    finalCommands = null;
+    finalCommands = new ArrayList<>();
   }
 
   public static String[] getArgs() {
@@ -61,21 +61,21 @@ public class Main {
     List<String> initial = JSON.parseObject(readFile(args[1]), strListType);
     List<String> constraints = JSON.parseObject(readFile(args[2]), strListType);
 
-    System.out.println("initial:");
-    initial.forEach(System.out::println);
-    System.out.println("constraints:");
-    constraints.forEach(System.out::println);
-    System.out.println("code:");
+//    System.out.println("initial:");
+//    initial.forEach(System.out::println);
+//    System.out.println("constraints:");
+//    constraints.forEach(System.out::println);
+//    System.out.println("code:");
 
     Main main = new Main(repo, initial, constraints);
     List<Package> initialOut = main.getInitialPackages();
-    main.search("", initialOut);
+    main.search(new ArrayList<>(), initialOut);
 
-    main.finalState.forEach(x -> System.out.println(x.getName()));
+//    main.finalState.forEach(x -> System.out.println(x.getName()));
 
-    // CHANGE CODE BELOW:
-    // using repo, initial and constraints, compute a solution and print the answer
-//    for (Package p : repo) {
+//     CHANGE CODE BELOW:
+//     using repo, initial and constraints, compute a solution and print the answer
+//    for (Package p : main.finalState) {
 //      System.out.printf("package %s version %s\n", p.getName(), p.getVersion());
 //      for (List<String> clause : p.getDepends()) {
 //        System.out.printf("  dep:");
@@ -85,44 +85,70 @@ public class Main {
 //        System.out.printf("\n");
 //      }
 //    }
+    System.out.println(main.constructOutput());
+  }
+
+  private String constructOutput() {
+    if (finalCommands.size() == 0) {
+      return "[]";
+    }
+    StringBuilder output = new StringBuilder();
+    output.append("[\n");
+    if (finalCommands.size() > 1) {
+      for (int i = 0; i < finalCommands.size() - 1; i++) {
+        output.append("  \"").append(finalCommands.get(i)).append("\",\n");
+      }
+      output.append("  \"").append(finalCommands.get(finalCommands.size() - 1)).append("\"\n");
+    } else {
+      output.append("  \"").append(finalCommands.get(0)).append("\"\n");
+    }
+    output.append("]");
+    return output.toString();
   }
 
   private List<Package> getInitialPackages() {
     List<Package> state = new ArrayList<>();
-    for (String name : initial) {
-      Package p = repo.stream().filter(x -> name.equals(x.getName())).findFirst().get();
+    for (String req : initial) {
+      String[] splReq = req.split("=");
+      Package p = repo.stream().filter(x -> { // this may need size optimisation if version is not specified?
+        return splReq[0].equals(x.getName())
+            && (splReq.length == 1 || splReq[1].equals(x.getVersion()));
+      }).max((x1, x2) -> x1.getSize() < x2.getSize() ? -1 : 1).get();
       state.add(p);
     }
     return state;
   }
 
 
-  private void search(String commands, List<Package> current) {
+  private void search(List<String> commands, List<Package> current) {
     if (!isValid(current)) return;
     if (hasSeen(current)) return;
     makeSeen(current);
     if (isFinal(current)) {
       // solution found
       // save global command -- eval if its shorter than current. DO NOT END PROCESS
-      if (finalCommands == null || commands.length() < finalCommands.length()) {
+      if (finalCommands.isEmpty() || commands.size() < finalCommands.size()) {
         finalState = current;
         finalCommands = commands;
       }
       return;
     }
+
     for (Package p : repo) {
-      String action = "";
-      List<Package> nextState = current;
-      if (!commands.contains("+" + p.getName())) {
-        action = getNextAction(p, current);
-        nextState = changeState(p, current);
+      if (commands.contains("+" + p.getName() + "=" + p.getVersion())) {
+        search(commands, current);
+      } else {
+        String action = getNextAction(p, current);
+        List<Package> nextState = changeState(p, current);
+        List<String> nextCommands = new ArrayList<>(commands);
+        nextCommands.add(action);
+        search(nextCommands, nextState);
       }
-      search(commands + action, nextState);
     }
   }
 
   private String getNextAction(Package p, List<Package> currentState) {
-    return (currentState.contains(p) ? "-" : "+") + p.getName();
+    return (currentState.contains(p) ? "-" : "+") + p.getName() + "=" + p.getVersion();
   }
 
   private List<Package> changeState(Package p, List<Package> old) {
