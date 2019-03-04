@@ -69,7 +69,7 @@ public class Main {
 
     Main main = new Main(repo, initial, constraints);
     List<Package> initialOut = main.getInitialPackages();
-    main.search(new ArrayList<>(), initialOut);
+    main.search(new LinkedList<>(), initialOut);
 
 //    main.finalState.forEach(x -> System.out.println(x.getName()));
 
@@ -120,7 +120,7 @@ public class Main {
   }
 
 
-  private void search(List<String> commands, List<Package> current) {
+  private void search(LinkedList<String> commands, List<Package> current) {
     if (!isValid(current)) return;
     if (hasSeen(current)) return;
     makeSeen(current);
@@ -135,12 +135,16 @@ public class Main {
     }
 
     for (Package p : repo) {
-      if (commands.contains("+" + p.getName() + "=" + p.getVersion())) {
+      String term = p.getName() + "=" + p.getVersion();
+      String plusTerm = "+" + term;
+      String minusTerm = "-" + term;
+      if (commands.contains(plusTerm)
+          || (!commands.isEmpty() && commands.getLast().equals(minusTerm))) {
         search(commands, current);
       } else {
         String action = getNextAction(p, current);
         List<Package> nextState = changeState(p, current);
-        List<String> nextCommands = new ArrayList<>(commands);
+        LinkedList<String> nextCommands = new LinkedList<>(commands);
         nextCommands.add(action);
         search(nextCommands, nextState);
       }
@@ -166,7 +170,7 @@ public class Main {
   }
 
   // implement checks for lexicographical order of packages -- will greatly reduce outcomes
-  static boolean isValid(List<Package> repo) {
+  static boolean isValid(List<Package> repo) { // issue here with seen-4
     Set<String> trackedNames = new HashSet<>();
     HashMap<String, Package> trackedPackages = new HashMap<>();
     for (Package p : repo) {
@@ -188,16 +192,22 @@ public class Main {
           String op = getOperator(disj);
           String[] constraints = splitRequirement(op, disj);
           String depName = constraints[0];
-          if (trackedNames.contains(depName)) {
-            if (constraints.length > 1) {
+          if (constraints.length == 1) {
+            for (String name : trackedNames) {
+              if (name.contains(depName)) {
+                meetsDisj = true;
+                break;
+              }
+            }
+          } else {
+            // possibly need to evaluate version numbers
+            String packageName = depName + "=" + constraints[1];
+            if (trackedNames.contains(packageName)) {
               Package seenEquivalent = trackedPackages.get(depName);
               if (satisfiesDependency(seenEquivalent, disj)) {
                 meetsDisj = true;
                 break;
               }
-            } else {
-              meetsDisj = true;
-              break;
             }
           }
         }
@@ -208,20 +218,23 @@ public class Main {
       for (String conflict : p.getConflicts()) {
         String op = getOperator(conflict);
         String[] constraints = splitRequirement(op, conflict);
-        String depName = constraints[0];
-        if (trackedNames.contains(depName)) {
-          if (constraints.length > 1) {
-            Package seenEquivalent = trackedPackages.get(depName);
-            if (satisfiesDependency(seenEquivalent, conflict)) {
+        String depName = constraints[0]; // check logic
+        for (String name : trackedNames) {
+          if (name.contains(depName)) {
+            if (constraints.length > 1) {
+              Package seenEquivalent = trackedPackages.get(name);
+              if (satisfiesDependency(seenEquivalent, conflict)) {
+                return false;
+              }
+            } else {
               return false;
             }
-          } else {
-            return false;
           }
         }
       }
-      trackedNames.add(p.getName());
-      trackedPackages.put(p.getName(), p);
+      String key = p.getName() + "=" + p.getVersion();
+      trackedNames.add(key);
+      trackedPackages.put(key, p);
     }
     return true;
   }
