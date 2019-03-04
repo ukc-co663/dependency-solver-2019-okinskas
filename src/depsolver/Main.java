@@ -139,6 +139,7 @@ public class Main {
       String plusTerm = "+" + term;
       String minusTerm = "-" + term;
       if (commands.contains(plusTerm)
+          || commands.contains(minusTerm)
           || (!commands.isEmpty() && commands.getLast().equals(minusTerm))) {
         search(commands, current);
       } else {
@@ -218,15 +219,14 @@ public class Main {
       for (String conflict : p.getConflicts()) {
         String op = getOperator(conflict);
         String[] constraints = splitRequirement(op, conflict);
-        String depName = constraints[0]; // check logic
         for (String name : trackedNames) {
-          if (name.contains(depName)) {
-            if (constraints.length > 1) {
-              Package seenEquivalent = trackedPackages.get(name);
-              if (satisfiesDependency(seenEquivalent, conflict)) {
-                return false;
-              }
-            } else {
+          if (constraints.length > 1) {
+            Package seenEquivalent = trackedPackages.get(name);
+            if (seenEquivalent != null && satisfiesDependency(seenEquivalent, conflict)) {
+              return false;
+            }
+          } else {
+            if (name.contains(constraints[0])) {
               return false;
             }
           }
