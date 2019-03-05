@@ -96,8 +96,6 @@ public class Main {
 
   private void search(List<String> commands, List<Package> current) {
     if (!isValid(current) || hasSeen(current)) return;
-    commands.forEach(x -> System.out.print(x + " "));
-    System.out.println();
     makeSeen(current);
     if (isFinal(current)) {
       if (finalCommands.isEmpty()) {
