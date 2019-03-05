@@ -5,7 +5,12 @@ import com.alibaba.fastjson.TypeReference;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 class Package {
@@ -95,7 +100,7 @@ public class Main {
 
 
   private void search(List<String> commands, List<Package> current) {
-    if (!isValid(current) || hasSeen(current)) return;
+    if (hasSeen(current) || !isValid(current)) return;
     makeSeen(current);
     if (isFinal(current)) {
       if (finalCommands.isEmpty()) {
@@ -139,7 +144,6 @@ public class Main {
     List<String> nextCommands = new ArrayList<>(commands);
     nextCommands.add(action);
     return nextCommands;
-
   }
 
   private List<Package> installPackage(Package p, List<Package> packages) {
