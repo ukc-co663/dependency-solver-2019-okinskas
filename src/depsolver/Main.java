@@ -110,15 +110,24 @@ public class Main {
     }
 
     for (Package p : repo) {
-      String term = p.getName() + "=" + p.getVersion();
-      if (commands.contains("+" + term) || commands.contains("-" + term)) {
-        search(commands, current);
+      boolean isInstalled = current.contains(p);
+      String term = getPackageKey(p);
+
+      if (isInstalled) {
+        if (!commands.contains("+" + term) || commands.size() < constraints.size()) {
+          List<Package> nextState = uninstallPackage(p, current);
+          List<String> nextCommands = getNextCommands(commands, current, p);
+          search(nextCommands, nextState);
+        }
       } else {
-        List<Package> nextState = changeState(p, current);
-        List<String> nextCommands = getNextCommands(commands, current, p);
-        search(nextCommands, nextState);
+        if (!commands.contains("-" + term) && !initial.contains(term)) {
+          List<Package> nextState = installPackage(p, current);
+          List<String> nextCommands = getNextCommands(commands, current, p);
+          search(nextCommands, nextState);
+        }
       }
     }
+    seen.remove(current);
   }
 
   private String getNextAction(Package p, List<Package> currentState) {
@@ -133,11 +142,16 @@ public class Main {
 
   }
 
-  private List<Package> changeState(Package p, List<Package> old) {
-    List<Package> repo = new ArrayList<>(old);
-    if (repo.contains(p)) repo.remove(p);
-    else repo.add(p);
-    return repo;
+  private List<Package> installPackage(Package p, List<Package> packages) {
+    List<Package> copy = new ArrayList<>(packages);
+    copy.add(p);
+    return copy;
+  }
+
+  private List<Package> uninstallPackage(Package p, List<Package> packages) {
+    List<Package> copy = new ArrayList<>(packages);
+    copy.remove(p);
+    return copy;
   }
 
   private void makeSeen(List<Package> repo) {
@@ -169,20 +183,17 @@ public class Main {
         String op = getOperator(disj);
         String[] constraints = splitRequirement(op, disj);
         String depName = constraints[0];
-        if (constraints.length == 1) {
-          for (String name : trackedNames) {
-            if (name.contains(depName)) {
+        for (String name : trackedNames) {
+          if (name.contains(depName)) {
+            if (constraints.length == 1) {
               meetsDisj = true;
               break;
-            }
-          }
-        } else {
-          String packageName = depName + "=" + constraints[1];
-          if (trackedNames.contains(packageName)) {
-            Package seenEquivalent = trackedPackages.get(packageName);
-            if (seenEquivalent != null && satisfiesDependency(seenEquivalent, disj)) {
-              meetsDisj = true;
-              break;
+            } else {
+              Package seenEquivalent = trackedPackages.get(name);
+              if (seenEquivalent != null && satisfiesDependency(seenEquivalent, disj)) {
+                meetsDisj = true;
+                break;
+              }
             }
           }
         }
@@ -314,14 +325,15 @@ public class Main {
   }
 
   static String[] splitConstraint(String constraint) {
-    String[] firstSplit = constraint.split("=");
-    String[] secondSplit = firstSplit[0].split("");
-    // + or -, name, version
-    if (firstSplit.length == 1) {
-      return new String[]{secondSplit[0], secondSplit[1]};
-    } else {
-      return new String[]{secondSplit[0], secondSplit[1], firstSplit[1]};
+
+    String op = String.valueOf(constraint.charAt(0));
+    String nameAndVersion = constraint.substring(1);
+
+    String[] split = nameAndVersion.split("=");
+    if (split.length == 1) {
+      return new String[]{op, split[0]};
     }
+    return new String[]{op, split[0], split[1]};
   }
 
   static String getOperator(String v) {
@@ -357,6 +369,7 @@ public class Main {
           if (p.getName().equals(cSpl[1])
               && (cSpl.length == 2 || p.getVersion().equals(cSpl[2]))) {
             foundMatch = true;
+            break;
           }
         }
         if (!foundMatch) {
