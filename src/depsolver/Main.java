@@ -6,6 +6,7 @@ import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 class Package {
   private String name;
@@ -28,12 +29,14 @@ class Package {
 
 public class Main {
 
+  private static int UNINSTALL_COST = 1000000;
   private List<Package> repo;
   private List<String> initial;
   private List<String> constraints;
   private HashSet<List<Package>> seen;
   private List<Package> finalState;
   private List<String> finalCommands;
+  public Integer finalCost;
 
   public Main(List<Package> repo, List<String> initial, List<String> constraints) {
     this.repo = repo;
@@ -41,19 +44,10 @@ public class Main {
     this.constraints = constraints;
     seen = new HashSet<>();
     finalCommands = new ArrayList<>();
-  }
-
-  public static String[] getArgs() {
-    String testDir = "tests/example-0/";
-    String repo = testDir + "repository.json";
-    String init = testDir + "initial.json";
-    String constraints = testDir + "constraints.json";
-    return new String[]{ repo, init, constraints };
+    finalCost = 0;
   }
 
   public static void main(String[] args) throws IOException {
-    // Custom args
-//    args = getArgs();
 
     TypeReference<List<Package>> repoType = new TypeReference<List<Package>>() {};
     List<Package> repo = JSON.parseObject(readFile(args[0]), repoType);
@@ -61,30 +55,10 @@ public class Main {
     List<String> initial = JSON.parseObject(readFile(args[1]), strListType);
     List<String> constraints = JSON.parseObject(readFile(args[2]), strListType);
 
-//    System.out.println("initial:");
-//    initial.forEach(System.out::println);
-//    System.out.println("constraints:");
-//    constraints.forEach(System.out::println);
-//    System.out.println("code:");
-
     Main main = new Main(repo, initial, constraints);
     List<Package> initialOut = main.getInitialPackages();
-    main.search(new LinkedList<>(), initialOut);
+    main.search(new ArrayList<>(), initialOut);
 
-//    main.finalState.forEach(x -> System.out.println(x.getName()));
-
-//     CHANGE CODE BELOW:
-//     using repo, initial and constraints, compute a solution and print the answer
-//    for (Package p : main.finalState) {
-//      System.out.printf("package %s version %s\n", p.getName(), p.getVersion());
-//      for (List<String> clause : p.getDepends()) {
-//        System.out.printf("  dep:");
-//        for (String q : clause) {
-//          System.out.printf(" %s", q);
-//        }
-//        System.out.printf("\n");
-//      }
-//    }
     System.out.println(main.constructOutput());
   }
 
@@ -120,49 +94,51 @@ public class Main {
   }
 
 
-  private void search(LinkedList<String> commands, List<Package> current) {
-    if (!isValid(current)) return;
-    if (hasSeen(current)) return;
+  private void search(List<String> commands, List<Package> current) {
+    if (!isValid(current) || hasSeen(current)) return;
+    commands.forEach(x -> System.out.print(x + " "));
+    System.out.println();
     makeSeen(current);
     if (isFinal(current)) {
-      // solution found
-      // save global command -- eval if its shorter than current. DO NOT END PROCESS
-      if (finalCommands.isEmpty() || commands.size() < finalCommands.size()) {
+      if (finalCommands.isEmpty()) {
         finalState = current;
         finalCommands = commands;
+      } else {
+        List<String> smallest = getMinCommandSequence(commands, finalCommands);
+        finalState = current;
+        finalCommands = smallest;
       }
       return;
     }
 
     for (Package p : repo) {
       String term = p.getName() + "=" + p.getVersion();
-      String plusTerm = "+" + term;
-      String minusTerm = "-" + term;
-      if (commands.contains(plusTerm)
-          || commands.contains(minusTerm)
-          || (!commands.isEmpty() && commands.getLast().equals(minusTerm))) {
+      if (commands.contains("+" + term) || commands.contains("-" + term)) {
         search(commands, current);
       } else {
-        String action = getNextAction(p, current);
         List<Package> nextState = changeState(p, current);
-        LinkedList<String> nextCommands = new LinkedList<>(commands);
-        nextCommands.add(action);
+        List<String> nextCommands = getNextCommands(commands, current, p);
         search(nextCommands, nextState);
       }
     }
   }
 
   private String getNextAction(Package p, List<Package> currentState) {
-    return (currentState.contains(p) ? "-" : "+") + p.getName() + "=" + p.getVersion();
+    return (currentState.contains(p) ? "-" : "+") + getPackageKey(p);
+  }
+
+  private List<String> getNextCommands(List<String> commands, List<Package> packages, Package p) {
+    String action = getNextAction(p, packages);
+    List<String> nextCommands = new ArrayList<>(commands);
+    nextCommands.add(action);
+    return nextCommands;
+
   }
 
   private List<Package> changeState(Package p, List<Package> old) {
     List<Package> repo = new ArrayList<>(old);
-    if (repo.contains(p)) {
-      repo.remove(p);
-    } else {
-      repo.add(p);
-    }
+    if (repo.contains(p)) repo.remove(p);
+    else repo.add(p);
     return repo;
   }
 
@@ -170,73 +146,86 @@ public class Main {
     seen.add(repo);
   }
 
-  // implement checks for lexicographical order of packages -- will greatly reduce outcomes
-  static boolean isValid(List<Package> repo) { // issue here with seen-4
+  static boolean isValid(List<Package> repo) {
     Set<String> trackedNames = new HashSet<>();
     HashMap<String, Package> trackedPackages = new HashMap<>();
     for (Package p : repo) {
-      for (Package sp : trackedPackages.values()) {
-        List<String> conflicts = sp.getConflicts();
-        for (String conflict : conflicts) {
-          String op = getOperator(conflict);
-          String[] constraints = splitRequirement(op, conflict);
-          if (constraints[0].equals(p.getName())) {
-            if (satisfiesDependency(p, conflict)) {
-              return false;
-            }
-          }
-        }
-      }
-      for (List<String> conj : p.getDepends()) {
-        boolean meetsDisj = false;
-        for (String disj : conj) {
-          String op = getOperator(disj);
-          String[] constraints = splitRequirement(op, disj);
-          String depName = constraints[0];
-          if (constraints.length == 1) {
-            for (String name : trackedNames) {
-              if (name.contains(depName)) {
-                meetsDisj = true;
-                break;
-              }
-            }
-          } else {
-            // possibly need to evaluate version numbers
-            String packageName = depName + "=" + constraints[1];
-            if (trackedNames.contains(packageName)) {
-              Package seenEquivalent = trackedPackages.get(depName);
-              if (satisfiesDependency(seenEquivalent, disj)) {
-                meetsDisj = true;
-                break;
-              }
-            }
-          }
-        }
-        if (!meetsDisj) {
-          return false;
-        }
-      }
-      for (String conflict : p.getConflicts()) {
-        String op = getOperator(conflict);
-        String[] constraints = splitRequirement(op, conflict);
-        for (String name : trackedNames) {
-          if (constraints.length > 1) {
-            Package seenEquivalent = trackedPackages.get(name);
-            if (seenEquivalent != null && satisfiesDependency(seenEquivalent, conflict)) {
-              return false;
-            }
-          } else {
-            if (name.contains(constraints[0])) {
-              return false;
-            }
-          }
-        }
-      }
-      String key = p.getName() + "=" + p.getVersion();
+      if (!satisfiesDependencies(trackedNames, trackedPackages, p)) return false;
+      if (hasConflicts(trackedNames, trackedPackages, p)) return false;
+
+      String key = getPackageKey(p);
       trackedNames.add(key);
       trackedPackages.put(key, p);
     }
     return true;
+  }
+
+  static String getPackageKey(Package p) {
+    return p.getName() + "=" + p.getVersion();
+  }
+
+  static boolean satisfiesDependencies(Set<String> trackedNames, Map<String, Package> trackedPackages, Package p) {
+    for (List<String> conj : p.getDepends()) {
+      boolean meetsDisj = false;
+      for (String disj : conj) {
+        String op = getOperator(disj);
+        String[] constraints = splitRequirement(op, disj);
+        String depName = constraints[0];
+        if (constraints.length == 1) {
+          for (String name : trackedNames) {
+            if (name.contains(depName)) {
+              meetsDisj = true;
+              break;
+            }
+          }
+        } else {
+          String packageName = depName + "=" + constraints[1];
+          if (trackedNames.contains(packageName)) {
+            Package seenEquivalent = trackedPackages.get(packageName);
+            if (seenEquivalent != null && satisfiesDependency(seenEquivalent, disj)) {
+              meetsDisj = true;
+              break;
+            }
+          }
+        }
+      }
+      if (!meetsDisj) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static boolean hasConflicts(Set<String> trackedNames, Map<String, Package> trackedPackages, Package p) {
+    for (Package sp : trackedPackages.values()) {
+      List<String> conflicts = sp.getConflicts();
+      for (String conflict : conflicts) {
+        String op = getOperator(conflict);
+        String[] constraints = splitRequirement(op, conflict);
+        if (constraints[0].equals(p.getName())) {
+          if (satisfiesDependency(p, conflict)) {
+            return true;
+          }
+        }
+      }
+    }
+    for (String conflict : p.getConflicts()) {
+      String op = getOperator(conflict);
+      String[] constraints = splitRequirement(op, conflict);
+      for (String name : trackedNames) {
+        if (constraints.length > 1) {
+          Package seenEquivalent = trackedPackages.get(name);
+          if (seenEquivalent != null && satisfiesDependency(seenEquivalent, conflict)) {
+            return true;
+          }
+        } else {
+          if (name.contains(constraints[0])) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 
   static boolean satisfiesDependency(Package seenPackage, String constraint) {
@@ -277,6 +266,48 @@ public class Main {
       else if (v1 < v2) return -1;
     }
     return 0;
+  }
+
+  List<String> getMinCommandSequence(List<String> a, List<String> b) {
+    int loopSize = Math.max(a.size(), b.size());
+    final AtomicInteger sumA = new AtomicInteger(0);
+    final AtomicInteger sumB = new AtomicInteger(0);
+
+    for (int i = 0; i < loopSize; i++) {
+      String strA = i < a.size() ? a.get(i) : null;
+      String strB = i < b.size() ? b.get(i) : null;
+      boolean evalA = strA != null;
+      boolean evalB = strB != null;
+      final String[] aProps = evalA ? getNameAndVersion(strA) : null;
+      final boolean installA = evalA && aProps[0].charAt(0) != '-';
+      final String[] bProps = evalB ? getNameAndVersion(strB) : null;
+      final boolean installB = evalB && bProps[0].charAt(0) != '-';
+
+      repo.forEach(p -> {
+        String name = p.getName();
+        String version = p.getVersion();
+        Integer size = p.getSize();
+
+        if (evalA && name.equals(aProps[0].substring(1)) && version.equals(aProps[1])) {
+          int cost = installA ? size : UNINSTALL_COST;
+          sumA.addAndGet(cost);
+        }
+        if (evalB && name.equals(bProps[0].substring(1)) && version.equals(bProps[1])) {
+          int cost = installB ? size : UNINSTALL_COST;
+          sumB.addAndGet(cost);
+        }
+      });
+    }
+    boolean aIsSmaller = sumA.get() < sumB.get();
+    if (aIsSmaller) finalCost = sumA.get();
+    else finalCost = sumB.get();
+
+    return aIsSmaller ? a : b;
+  }
+
+  static String[] getNameAndVersion(String nameVer) {
+    return splitRequirement("=", nameVer);
+
   }
 
   static String[] splitRequirement(String op, String fullVerString) {
