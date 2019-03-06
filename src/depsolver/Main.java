@@ -35,11 +35,13 @@ class Package {
 public class Main {
 
   private static int UNINSTALL_COST = 1000000;
+  private static double MAX_RUN_TIME = 45000;
+  private double startTime;
+  private boolean forceFinish;
   private List<Package> repo;
   private List<String> initial;
   private List<String> constraints;
   private HashSet<List<Package>> seen;
-  private List<Package> finalState;
   private List<String> finalCommands;
   public Integer finalCost;
 
@@ -50,6 +52,8 @@ public class Main {
     seen = new HashSet<>();
     finalCommands = new ArrayList<>();
     finalCost = 0;
+    startTime = System.currentTimeMillis();
+    forceFinish = false;
   }
 
   public static void main(String[] args) throws IOException {
@@ -99,16 +103,12 @@ public class Main {
   }
 
   private void search(List<String> commands, List<Package> current) {
-    if (hasSeen(current) || !isValid(current)) return;
+    if (forceFinish || hasSeen(current) || !isValid(current)) return;
     makeSeen(current);
     if (isFinal(current)) {
-      if (finalCommands.isEmpty()) {
-        finalState = current;
-        finalCommands = commands;
-      } else {
-        List<String> smallest = getMinCommandSequence(commands, finalCommands);
-        finalState = current;
-        finalCommands = smallest;
+      finalCommands = finalCommands.isEmpty() ? commands : getMinCommandSequence(commands, finalCommands);
+      if (hasExceededTimeConstraint()) {
+        forceFinish = true;
       }
       return;
     }
@@ -118,7 +118,7 @@ public class Main {
       String term = getPackageKey(p);
 
       if (isInstalled) {
-        if (!commands.contains("+" + term) || commands.size() < constraints.size()) {
+        if (!commands.contains("+" + term) || commands.size() < constraints.size() && requiresUninstall(p)) {
           List<Package> nextState = uninstallPackage(p, current);
           List<String> nextCommands = getNextCommands(commands, current, p);
           search(nextCommands, nextState);
@@ -171,7 +171,6 @@ public class Main {
 
     for (Package p : repo) {
       if (hasConflicts(trackedNames, trackedPackages, p)) return false;
-
       String key = getPackageKey(p);
       trackedNames.add(key);
       trackedPackages.put(key, p);
@@ -213,6 +212,19 @@ public class Main {
     return true;
   }
 
+  private boolean requiresUninstall(Package p) {
+    String name = p.getName();
+    String plusName = "+" + name;
+    String minusName = "-" + name;
+    String nameVer = getPackageKey(p);
+    String plusNameVer = "+" + nameVer;
+    String minusNameVer = "-" + nameVer;
+
+    if (constraints.contains(plusName) || constraints.contains(plusNameVer)) return false;
+    if (constraints.contains(minusName) || constraints.contains(minusNameVer)) return true;
+    return true;
+  }
+
   static String getPackageKey(Package p) {
     return p.getName() + "=" + p.getVersion();
   }
@@ -234,14 +246,16 @@ public class Main {
       String op = getOperator(conflict);
       String[] constraints = splitRequirement(op, conflict);
       for (String name : trackedNames) {
-        if (constraints.length > 1) {
-          Package seenEquivalent = trackedPackages.get(name);
-          if (seenEquivalent != null && satisfiesDependency(seenEquivalent, conflict)) {
-            return true;
-          }
-        } else {
-          if (name.contains(constraints[0])) {
-            return true;
+        if (name.contains(constraints[0])) {
+          if (constraints.length > 1) {
+            Package seenEquivalent = trackedPackages.get(name);
+            if (seenEquivalent != null && satisfiesDependency(seenEquivalent, conflict)) {
+              return true;
+            }
+          } else {
+            if (name.contains(constraints[0])) {
+              return true;
+            }
           }
         }
       }
@@ -397,6 +411,10 @@ public class Main {
       }
     }
     return true;
+  }
+
+  private boolean hasExceededTimeConstraint() {
+    return startTime + MAX_RUN_TIME < System.currentTimeMillis();
   }
 
   boolean hasSeen(List<Package> repo) {
