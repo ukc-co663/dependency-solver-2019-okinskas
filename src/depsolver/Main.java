@@ -71,24 +71,6 @@ public class Main {
     System.out.println(main.constructOutput());
   }
 
-  private String constructOutput() {
-    if (finalCommands.size() == 0) {
-      return "[]";
-    }
-    StringBuilder output = new StringBuilder();
-    output.append("[\n");
-    if (finalCommands.size() > 1) {
-      for (int i = 0; i < finalCommands.size() - 1; i++) {
-        output.append("  \"").append(finalCommands.get(i)).append("\",\n");
-      }
-      output.append("  \"").append(finalCommands.get(finalCommands.size() - 1)).append("\"\n");
-    } else {
-      output.append("  \"").append(finalCommands.get(0)).append("\"\n");
-    }
-    output.append("]");
-    return output.toString();
-  }
-
   private List<Package> getInitialPackages() {
     List<Package> state = new ArrayList<>();
     for (String req : initial) {
@@ -124,7 +106,7 @@ public class Main {
           search(nextCommands, nextState);
         }
       } else {
-        if (!commands.contains("-" + term) && !initial.contains(term)) {
+        if (!commands.contains("-" + term)) {
           List<Package> nextState = installPackage(p, current);
           List<String> nextCommands = getNextCommands(commands, current, p);
           search(nextCommands, nextState);
@@ -132,6 +114,14 @@ public class Main {
       }
     }
     seen.remove(current);
+  }
+
+  boolean hasSeen(List<Package> repo) {
+    return seen.contains(repo);
+  }
+
+  private void makeSeen(List<Package> repo) {
+    seen.add(repo);
   }
 
   private String getNextAction(Package p, List<Package> currentState) {
@@ -157,8 +147,47 @@ public class Main {
     return copy;
   }
 
-  private void makeSeen(List<Package> repo) {
-    seen.add(repo);
+  private boolean requiresUninstall(Package p) {
+    String name = p.getName();
+    String nameVer = getPackageKey(p);
+
+    if (constraints.contains('+' + name) || constraints.contains('+' + nameVer)) return false;
+    return constraints.contains('-' + name) || constraints.contains('-' + nameVer);
+  }
+
+  private List<String> getMinCommandSequence(List<String> a, List<String> b) {
+    int loopSize = Math.max(a.size(), b.size());
+    final AtomicInteger sumA = new AtomicInteger(0);
+    final AtomicInteger sumB = new AtomicInteger(0);
+
+    for (int i = 0; i < loopSize; i++) {
+      String strA = i < a.size() ? a.get(i) : null;
+      String strB = i < b.size() ? b.get(i) : null;
+      boolean evalA = strA != null;
+      boolean evalB = strB != null;
+      final String[] aProps = evalA ? getNameAndVersion(strA) : null;
+      final boolean installA = evalA && aProps[0].charAt(0) != '-';
+      final String[] bProps = evalB ? getNameAndVersion(strB) : null;
+      final boolean installB = evalB && bProps[0].charAt(0) != '-';
+
+      repo.forEach(p -> {
+        String name = p.getName();
+        String version = p.getVersion();
+        Integer size = p.getSize();
+
+        if (evalA && name.equals(aProps[0].substring(1)) && version.equals(aProps[1])) {
+          int cost = installA ? size : UNINSTALL_COST;
+          sumA.addAndGet(cost);
+        }
+        if (evalB && name.equals(bProps[0].substring(1)) && version.equals(bProps[1])) {
+          int cost = installB ? size : UNINSTALL_COST;
+          sumB.addAndGet(cost);
+        }
+      });
+    }
+    boolean aIsSmaller = sumA.get() < sumB.get();
+    finalCost = aIsSmaller ? sumA.get() : sumB.get();
+    return aIsSmaller ? a : b;
   }
 
   static boolean isValid(List<Package> repo) {
@@ -178,10 +207,55 @@ public class Main {
     return true;
   }
 
-  static private boolean hasValidDependencies(List<Package> repo) {
+  static boolean hasConflicts(Set<String> trackedNames, Map<String, Package> trackedPackages, Package p) {
+    for (Package sp : trackedPackages.values()) {
+      List<String> conflicts = sp.getConflicts();
+      for (String conflict : conflicts) {
+        String op = getOperator(conflict);
+        if (op.equals("=") && trackedNames.contains(getPackageKey(p))) {
+          return true;
+        }
+
+        String[] constraints = splitRequirement(op, conflict);
+        if (constraints[0].equals(p.getName())) {
+          if (satisfiesDependency(p, conflict)) {
+            return true;
+          }
+        }
+      }
+    }
+    for (String conflict : p.getConflicts()) {
+      String op = getOperator(conflict);
+
+      if (op.equals("=") && trackedNames.contains(conflict)) {
+        return true;
+      }
+
+      String[] constraints = splitRequirement(op, conflict);
+
+      for (String name : trackedNames) {
+        if (name.contains(constraints[0])) {
+          if (constraints.length > 1) {
+            Package seenEquivalent = trackedPackages.get(name);
+            if (seenEquivalent != null && satisfiesDependency(seenEquivalent, conflict)) {
+              return true;
+            }
+          } else {
+            if (name.contains(constraints[0])) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  static boolean hasValidDependencies(List<Package> repo) {
     if (repo.isEmpty()) return true;
 
     Package p = repo.get(repo.size() - 1);
+
     List<List<String>> deps = p.getDepends();
     for (int i = 0; i < deps.size(); i++) {
       boolean meetsDisj = false;
@@ -210,57 +284,6 @@ public class Main {
       }
     }
     return true;
-  }
-
-  private boolean requiresUninstall(Package p) {
-    String name = p.getName();
-    String plusName = "+" + name;
-    String minusName = "-" + name;
-    String nameVer = getPackageKey(p);
-    String plusNameVer = "+" + nameVer;
-    String minusNameVer = "-" + nameVer;
-
-    if (constraints.contains(plusName) || constraints.contains(plusNameVer)) return false;
-    if (constraints.contains(minusName) || constraints.contains(minusNameVer)) return true;
-    return true;
-  }
-
-  static String getPackageKey(Package p) {
-    return p.getName() + "=" + p.getVersion();
-  }
-
-  static boolean hasConflicts(Set<String> trackedNames, Map<String, Package> trackedPackages, Package p) {
-    for (Package sp : trackedPackages.values()) {
-      List<String> conflicts = sp.getConflicts();
-      for (String conflict : conflicts) {
-        String op = getOperator(conflict);
-        String[] constraints = splitRequirement(op, conflict);
-        if (constraints[0].equals(p.getName())) {
-          if (satisfiesDependency(p, conflict)) {
-            return true;
-          }
-        }
-      }
-    }
-    for (String conflict : p.getConflicts()) {
-      String op = getOperator(conflict);
-      String[] constraints = splitRequirement(op, conflict);
-      for (String name : trackedNames) {
-        if (name.contains(constraints[0])) {
-          if (constraints.length > 1) {
-            Package seenEquivalent = trackedPackages.get(name);
-            if (seenEquivalent != null && satisfiesDependency(seenEquivalent, conflict)) {
-              return true;
-            }
-          } else {
-            if (name.contains(constraints[0])) {
-              return true;
-            }
-          }
-        }
-      }
-    }
-    return false;
   }
 
   static boolean satisfiesDependency(Package seenPackage, String constraint) {
@@ -303,43 +326,6 @@ public class Main {
     return 0;
   }
 
-  List<String> getMinCommandSequence(List<String> a, List<String> b) {
-    int loopSize = Math.max(a.size(), b.size());
-    final AtomicInteger sumA = new AtomicInteger(0);
-    final AtomicInteger sumB = new AtomicInteger(0);
-
-    for (int i = 0; i < loopSize; i++) {
-      String strA = i < a.size() ? a.get(i) : null;
-      String strB = i < b.size() ? b.get(i) : null;
-      boolean evalA = strA != null;
-      boolean evalB = strB != null;
-      final String[] aProps = evalA ? getNameAndVersion(strA) : null;
-      final boolean installA = evalA && aProps[0].charAt(0) != '-';
-      final String[] bProps = evalB ? getNameAndVersion(strB) : null;
-      final boolean installB = evalB && bProps[0].charAt(0) != '-';
-
-      repo.forEach(p -> {
-        String name = p.getName();
-        String version = p.getVersion();
-        Integer size = p.getSize();
-
-        if (evalA && name.equals(aProps[0].substring(1)) && version.equals(aProps[1])) {
-          int cost = installA ? size : UNINSTALL_COST;
-          sumA.addAndGet(cost);
-        }
-        if (evalB && name.equals(bProps[0].substring(1)) && version.equals(bProps[1])) {
-          int cost = installB ? size : UNINSTALL_COST;
-          sumB.addAndGet(cost);
-        }
-      });
-    }
-    boolean aIsSmaller = sumA.get() < sumB.get();
-    if (aIsSmaller) finalCost = sumA.get();
-    else finalCost = sumB.get();
-
-    return aIsSmaller ? a : b;
-  }
-
   static String[] getNameAndVersion(String nameVer) {
     return splitRequirement("=", nameVer);
 
@@ -375,6 +361,10 @@ public class Main {
       return "=";
     }
     return "";
+  }
+
+  static String getPackageKey(Package p) {
+    return p.getName() + "=" + p.getVersion();
   }
 
   static List<Integer> getNumericVersion(String verString) {
@@ -417,8 +407,22 @@ public class Main {
     return startTime + MAX_RUN_TIME < System.currentTimeMillis();
   }
 
-  boolean hasSeen(List<Package> repo) {
-    return seen.contains(repo);
+  private String constructOutput() {
+    if (finalCommands.size() == 0) {
+      return "[]";
+    }
+    StringBuilder output = new StringBuilder();
+    output.append("[\n");
+    if (finalCommands.size() > 1) {
+      for (int i = 0; i < finalCommands.size() - 1; i++) {
+        output.append("  \"").append(finalCommands.get(i)).append("\",\n");
+      }
+      output.append("  \"").append(finalCommands.get(finalCommands.size() - 1)).append("\"\n");
+    } else {
+      output.append("  \"").append(finalCommands.get(0)).append("\"\n");
+    }
+    output.append("]");
+    return output.toString();
   }
 
   static String readFile(String filename) throws IOException {
