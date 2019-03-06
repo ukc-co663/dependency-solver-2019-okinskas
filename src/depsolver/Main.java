@@ -98,7 +98,6 @@ public class Main {
     return state;
   }
 
-
   private void search(List<String> commands, List<Package> current) {
     if (hasSeen(current) || !isValid(current)) return;
     makeSeen(current);
@@ -165,8 +164,12 @@ public class Main {
   static boolean isValid(List<Package> repo) {
     Set<String> trackedNames = new HashSet<>();
     HashMap<String, Package> trackedPackages = new HashMap<>();
+
+    if (!hasValidDependencies(repo)) {
+      return false;
+    }
+
     for (Package p : repo) {
-      if (!satisfiesDependencies(trackedNames, trackedPackages, p)) return false;
       if (hasConflicts(trackedNames, trackedPackages, p)) return false;
 
       String key = getPackageKey(p);
@@ -176,25 +179,26 @@ public class Main {
     return true;
   }
 
-  static String getPackageKey(Package p) {
-    return p.getName() + "=" + p.getVersion();
-  }
+  static private boolean hasValidDependencies(List<Package> repo) {
+    if (repo.isEmpty()) return true;
 
-  static boolean satisfiesDependencies(Set<String> trackedNames, Map<String, Package> trackedPackages, Package p) {
-    for (List<String> conj : p.getDepends()) {
+    Package p = repo.get(repo.size() - 1);
+    List<List<String>> deps = p.getDepends();
+    for (int i = 0; i < deps.size(); i++) {
       boolean meetsDisj = false;
-      for (String disj : conj) {
+      for (String disj : deps.get(i)) {
         String op = getOperator(disj);
         String[] constraints = splitRequirement(op, disj);
         String depName = constraints[0];
-        for (String name : trackedNames) {
+        for (int j = 0; j < repo.size() - 1; j++) {
+          Package x = repo.get(j);
+          String name = x.getName();
           if (name.contains(depName)) {
             if (constraints.length == 1) {
               meetsDisj = true;
               break;
             } else {
-              Package seenEquivalent = trackedPackages.get(name);
-              if (seenEquivalent != null && satisfiesDependency(seenEquivalent, disj)) {
+              if (satisfiesDependency(x, disj)) {
                 meetsDisj = true;
                 break;
               }
@@ -207,6 +211,10 @@ public class Main {
       }
     }
     return true;
+  }
+
+  static String getPackageKey(Package p) {
+    return p.getName() + "=" + p.getVersion();
   }
 
   static boolean hasConflicts(Set<String> trackedNames, Map<String, Package> trackedPackages, Package p) {
