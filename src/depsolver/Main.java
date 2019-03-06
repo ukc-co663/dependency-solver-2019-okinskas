@@ -152,7 +152,7 @@ public class Main {
     String nameVer = getPackageKey(p);
 
     if (constraints.contains('+' + name) || constraints.contains('+' + nameVer)) return false;
-    return constraints.contains('-' + name) || constraints.contains('-' + nameVer);
+    return !(constraints.contains('-' + name) || constraints.contains('-' + nameVer));
   }
 
   private List<String> getMinCommandSequence(List<String> a, List<String> b) {
